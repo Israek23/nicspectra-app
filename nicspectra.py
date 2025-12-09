@@ -509,8 +509,8 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     ax.grid(True, linestyle='--', alpha=0.7); ax.legend(); ax.set_xlim(0, 4); ax.set_ylim(0)
     st.pyplot(fig)
 
-    # ------------------------------------------------------------------------
-    # 6. GRÁFICOS Y DESCARGAS (CON LISTA DESPLEGABLE)
+  # ------------------------------------------------------------------------
+    # 6. GRÁFICOS Y DESCARGAS 
     # ------------------------------------------------------------------------
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(T_vals, A_elastico, 'k-', linewidth=2, label='Elástico (A)')
@@ -519,20 +519,21 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     ax.set_xlabel("Periodo (s)"); ax.set_ylabel("Aceleración (g)")
     ax.grid(True, linestyle='--', alpha=0.7); ax.legend(); ax.set_xlim(0, 4); ax.set_ylim(0)
     
+
+    nombre_dep = Departamento.replace(" ", "_")
+    
+    # Nombre base: "NSM22_MANAGUA_SueloC"
+    nombre_base = f"NSM22_{nombre_dep}_Suelo{Tipo_Suelo}"
+
     st.markdown("---")
     st.subheader("Descargas")
 
     @st.cache_data
-    def convertir_csv(t, sa):
-        df = pd.DataFrame({'Periodo(s)': t, 'Sa_Diseño(g)': sa})
-        return df.to_csv(index=False).encode('utf-8')
-
-    @st.cache_data
     def convertir_txt(t, sa):
+        # Crea el texto con columnas alineadas
         df = pd.DataFrame({'Periodo(s)': t, 'Sa_Diseño(g)': sa})
         return df.to_string(index=False).encode('utf-8')
 
-   
     def obtener_imagen(figure):
         import io
         buf = io.BytesIO()
@@ -540,29 +541,19 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         buf.seek(0)
         return buf
 
-    # --- INTERFAZ DE LISTA DESPLEGABLE ---
+    # --- MENÚ DE DESCARGA ---
     
     opcion_descarga = st.selectbox(
         "Seleccione el formato a descargar:",
-        ["Hoja de Cálculo (.csv)", "Texto Plano (.txt)", "Gráfico de Espectro (.png)"]
+        ["Texto Plano (.txt)", "Gráfico de Espectro (.png)"]
     )
 
-    if opcion_descarga == "Hoja de Cálculo (.csv)":
-        csv_data = convertir_csv(T_vals, A_diseno)
-        st.download_button(
-            label="📥 Descargar CSV", 
-            data=csv_data, 
-            file_name="espectro_diseno.csv", 
-            mime="text/csv",
-            key="dl_csv"
-        )
-        
-    elif opcion_descarga == "Texto Plano (.txt)":
+    if opcion_descarga == "Texto Plano (.txt)":
         txt_data = convertir_txt(T_vals, A_diseno)
         st.download_button(
-            label="📄 Descargar TXT", 
+            label=f"📄 Descargar TXT ({nombre_base})", 
             data=txt_data, 
-            file_name="espectro_diseno.txt", 
+            file_name=f"{nombre_base}.txt", 
             mime="text/plain",
             key="dl_txt"
         )
@@ -570,9 +561,9 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     elif opcion_descarga == "Gráfico de Espectro (.png)":
         img_data = obtener_imagen(fig)
         st.download_button(
-            label="🖼️ Descargar PNG",
+            label=f"🖼️ Descargar PNG ({nombre_base})",
             data=img_data,
-            file_name="grafico_espectro.png",
+            file_name=f"{nombre_base}.png",
             mime="image/png",
             key="dl_png"
         )
