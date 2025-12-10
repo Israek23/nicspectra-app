@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import folium
 from streamlit_folium import st_folium
+import io
 
 # ----------------------------------------------------------------------------
 # 0. CONFIGURACIÓN GLOBAL
@@ -17,7 +18,15 @@ st.set_page_config(
 # ----------------------------------------------------------------------------
 # 1. MENÚ DE NAVEGACIÓN
 # ----------------------------------------------------------------------------
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Flag_of_Nicaragua.svg/1200px-Flag_of_Nicaragua.svg.png", width=50)
+
+try:
+    st.sidebar.image("logo_nicspectra.jpg", width=200)
+except:
+    try:
+        st.sidebar.image("logo nicspectra.jpg", width=200)
+    except:
+        pass
+
 st.sidebar.title("Navegación")
 modulo_seleccionado = st.sidebar.radio(
     "Seleccione el Módulo:", 
@@ -38,35 +47,23 @@ def app_viento():
     # --- INPUTS VIENTO ---
     with st.sidebar:
         st.subheader("1. Geometría del Edificio")
-        B = st.number_input("Ancho Frontal B (m)", value=20.0, min_value=1.0, help="Ancho de la cara expuesta al viento")
+        B = st.number_input("Ancho Frontal B (m)", value=20.0, min_value=1.0)
         L = st.number_input("Profundidad L (m)", value=15.0, min_value=1.0)
-        
-        alturas_input = st.text_area("Alturas de Entrepisos (m)", value="4.0, 3.5, 3.5, 3.5", help="Separa los valores con comas (ej: 4.0, 3.5)")
+        alturas_input = st.text_area("Alturas de Entrepisos (m)", value="4.0, 3.5, 3.5, 3.5")
         
         st.subheader("2. Parámetros RNC-07")
-        
-        # Selectores
-        zona_opt = st.selectbox("Zona Eólica (Fig. 7)", 
-                                ["Zona 1 (Norte/Centro)", "Zona 2 (Pacífico/Managua)", "Zona 3 (Atlántico)"])
-        
-        grupo_opt = st.selectbox("Importancia (Art. 50)", 
-                                 ["Grupo A (Esencial - 200 años)", "Grupo B (Normal - 50 años)"])
-        
-        rugosidad_opt = st.selectbox("Rugosidad (Tabla 6)", 
-                                     ["R1 (Campo Abierto)", "R2 (Pocas obstrucciones)", "R3 (Urbano)", "R4 (Centro denso)"])
-        
-        topo_opt = st.selectbox("Topografía (Tabla 7)", 
-                                ["T1 (Protegida)", "T2 (Valles)", "T3 (Plano < 5%)", "T4 (Pendiente 5-10%)", "T5 (Cimas > 10%)"])
+        zona_opt = st.selectbox("Zona Eólica (Fig. 7)", ["Zona 1 (Norte/Centro)", "Zona 2 (Pacífico/Managua)", "Zona 3 (Atlántico)"])
+        grupo_opt = st.selectbox("Importancia (Art. 50)", ["Grupo A (Esencial - 200 años)", "Grupo B (Normal - 50 años)"])
+        rugosidad_opt = st.selectbox("Rugosidad (Tabla 6)", ["R1 (Campo Abierto)", "R2 (Pocas obstrucciones)", "R3 (Urbano)", "R4 (Centro denso)"])
+        topo_opt = st.selectbox("Topografía (Tabla 7)", ["T1 (Protegida)", "T2 (Valles)", "T3 (Plano < 5%)", "T4 (Pendiente 5-10%)", "T5 (Cimas > 10%)"])
 
     # --- CÁLCULOS VIENTO ---
     try:
-        # 1. Parsear alturas
         h_pisos = [float(x.strip()) for x in alturas_input.split(',') if x.strip()]
         if not h_pisos:
             st.warning("⚠️ Ingresa al menos una altura de entrepiso.")
             return
 
-        # 2. Calcular Z acumulada y H total
         z_acum = []
         acc = 0
         for h in h_pisos:
@@ -74,145 +71,65 @@ def app_viento():
             z_acum.append(acc)
         H_total = z_acum[-1]
 
-        # 3. Lógica RNC-07 (Título IV)
-        
-        # --- A. Velocidad Regional (Vr) - Tabla 5 ---
-        # CORRECCIÓN: Cortamos el string antes del paréntesis "Zona 1 (Norte..." -> "Zona 1"
+        # Lógica RNC-07
         zona_key = zona_opt.split(" (")[0] 
         mapa_zona = {"Zona 1": 1, "Zona 2": 2, "Zona 3": 3}
-        
-        if zona_key not in mapa_zona:
-            st.error(f"Error interno: No se reconoce la zona '{zona_key}'")
-            return
+        if zona_key not in mapa_zona: return
             
         zona_idx = mapa_zona[zona_key]
         es_grupo_a = "Grupo A" in grupo_opt
-        
-        # Matriz Vr [Zona][Grupo]
-        tabla_vr = {
-            1: {'A': 36, 'B': 30},
-            2: {'A': 60, 'B': 45},
-            3: {'A': 70, 'B': 56}
-        }
-        grupo_key = 'A' if es_grupo_a else 'B'
-        Vr = tabla_vr[zona_idx][grupo_key]
+        tabla_vr = {1: {'A': 36, 'B': 30}, 2: {'A': 60, 'B': 45}, 3: {'A': 70, 'B': 56}}
+        Vr = tabla_vr[zona_idx]['A' if es_grupo_a else 'B']
 
-        # --- B. Rugosidad (Alpha y Delta) - Tabla 6 ---
-        rug_cod = rugosidad_opt.split(" ")[0] # Toma "R1", "R2", etc.
-        tabla_rug = {
-            'R1': {'a': 0.099, 'd': 245},
-            'R2': {'a': 0.128, 'd': 315},
-            'R3': {'a': 0.156, 'd': 390},
-            'R4': {'a': 0.170, 'd': 455}
-        }
-        alpha = tabla_rug[rug_cod]['a']
-        delta = tabla_rug[rug_cod]['d']
+        rug_cod = rugosidad_opt.split(" ")[0]
+        tabla_rug = {'R1': {'a': 0.099, 'd': 245}, 'R2': {'a': 0.128, 'd': 315}, 'R3': {'a': 0.156, 'd': 390}, 'R4': {'a': 0.170, 'd': 455}}
+        alpha, delta = tabla_rug[rug_cod]['a'], tabla_rug[rug_cod]['d']
 
-        # --- C. Factor Topográfico (Ftr) - Tabla 7 ---
-        topo_cod = topo_opt.split(" ")[0] # Toma "T1", "T2", etc.
-        if rug_cod == 'R1':
-            Ftr = 1.0 # Art 52 excepción
+        topo_cod = topo_opt.split(" ")[0]
+        if rug_cod == 'R1': Ftr = 1.0
         else:
-            tabla_ftr = {
-                'T1': {'R2': 0.8, 'R3': 0.70, 'R4': 0.66},
-                'T2': {'R2': 0.9, 'R3': 0.79, 'R4': 0.74},
-                'T3': {'R2': 1.0, 'R3': 0.88, 'R4': 0.82},
-                'T4': {'R2': 1.1, 'R3': 0.97, 'R4': 0.90},
-                'T5': {'R2': 1.2, 'R3': 1.06, 'R4': 0.98}
-            }
+            tabla_ftr = {'T1': {'R2': 0.8, 'R3': 0.70, 'R4': 0.66}, 'T2': {'R2': 0.9, 'R3': 0.79, 'R4': 0.74}, 
+                         'T3': {'R2': 1.0, 'R3': 0.88, 'R4': 0.82}, 'T4': {'R2': 1.1, 'R3': 0.97, 'R4': 0.90}, 'T5': {'R2': 1.2, 'R3': 1.06, 'R4': 0.98}}
             Ftr = tabla_ftr[topo_cod][rug_cod]
 
-        # --- D. Constantes Físicas ---
-        # Art. 53: 0.0479
-        K_PRESION = 0.0479 
-        # Tabla 8: Coeficientes
-        CP_BARLO = 0.8     
-        CP_SOTA = 0.4      
-
-        # --- E. Sotavento (Constante en altura H) ---
+        K_PRESION, CP_BARLO, CP_SOTA = 0.0479, 0.8, 0.4
         z_sot = max(10.0, min(H_total, delta))
-        Fa_sot = 1.0
-        if z_sot > 10:
-            Fa_sot = (z_sot / 10.0) ** alpha
-        
+        Fa_sot = (z_sot / 10.0) ** alpha if z_sot > 10 else 1.0
         Vd_sot = Vr * Fa_sot * Ftr
-        q_sot = K_PRESION * CP_SOTA * (Vd_sot**2) # kg/m2
+        q_sot = K_PRESION * CP_SOTA * (Vd_sot**2)
 
         resultados = []
-        sum_fx = 0
-        sum_fy = 0
+        sum_fx, sum_fy = 0, 0
 
-        # --- F. Bucle por Nivel (Barlovento varía con Z) ---
         for i, z in enumerate(z_acum):
             h_piso = h_pisos[i]
+            h_trib = h_piso / 2.0 if i == len(h_pisos) - 1 else (h_piso / 2.0) + (h_pisos[i+1] / 2.0)
             
-            # Altura Tributaria
-            if i == len(h_pisos) - 1: # Techo
-                h_trib = h_piso / 2.0
-            else:
-                h_trib = (h_piso / 2.0) + (h_pisos[i+1] / 2.0)
-
-            # Factor Fa (Barlovento)
             z_calc = max(10.0, min(z, delta))
-            Fa = 1.0
-            if z > 10:
-                Fa = (z_calc / 10.0) ** alpha
-            
-            # Velocidad Diseño Vd
+            Fa = (z_calc / 10.0) ** alpha if z > 10 else 1.0
             Vd = Vr * Fa * Ftr
-            
-            # Presiones
             q_barlo = K_PRESION * CP_BARLO * (Vd**2)
             q_neto = q_barlo + q_sot
             
-            # Fuerzas (Ton)
             fx = q_neto * B * h_trib / 1000
             fy = q_neto * L * h_trib / 1000
-            
-            sum_fx += fx
-            sum_fy += fy
+            sum_fx += fx; sum_fy += fy
 
-            resultados.append({
-                "Nivel": f"Piso {i+1}",
-                "Z (m)": f"{z:.2f}",
-                "Fa": f"{Fa:.3f}",
-                "Vd (m/s)": f"{Vd:.2f}",
-                "q_neto (kg/m²)": f"{q_neto:.2f}",
-                "Fx (Ton)": round(fx, 3),
-                "Fy (Ton)": round(fy, 3)
-            })
+            resultados.append({"Nivel": f"Piso {i+1}", "Z (m)": f"{z:.2f}", "Fa": f"{Fa:.3f}", "Vd (m/s)": f"{Vd:.2f}", 
+                               "q_neto (kg/m²)": f"{q_neto:.2f}", "Fx (Ton)": round(fx, 3), "Fy (Ton)": round(fy, 3)})
 
-        # --- 4. VISUALIZACIÓN ---
         col1, col2, col3 = st.columns(3)
-        col1.metric("Velocidad Regional (Vr)", f"{Vr} m/s")
-        col2.metric("Cortante Basal FX", f"{sum_fx:.2f} Ton")
-        col3.metric("Cortante Basal FY", f"{sum_fy:.2f} Ton")
+        col1.metric("Velocidad Regional", f"{Vr} m/s")
+        col2.metric("Cortante FX", f"{sum_fx:.2f} Ton")
+        col3.metric("Cortante FY", f"{sum_fy:.2f} Ton")
 
         df = pd.DataFrame(resultados)
-        st.subheader("Tabla de Cargas Estáticas")
+        st.subheader("Tabla de Cargas")
         st.dataframe(df, use_container_width=True)
+        st.download_button("📥 Descargar CSV", df.to_csv(index=False).encode('utf-8'), "cargas_viento.csv", "text/csv")
 
-        # Descargas
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Descargar CSV",
-            data=csv,
-            file_name='cargas_viento_rnc07.csv',
-            mime='text/csv',
-        )
-        
-        # Debug info
-        with st.expander("Ver Factores de Cálculo"):
-            st.write(f"**Factor Topográfico (Ftr):** {Ftr}")
-            st.write(f"**Coef. Rugosidad (Alpha):** {alpha}")
-            st.write(f"**Altura Gradiente (Delta):** {delta} m")
-            st.write(f"**Presión Sotavento (Constante):** {q_sot:.2f} kg/m²")
-
-    except ValueError:
-        st.error("⚠️ Error en formato de alturas. Asegúrate de usar números separados por comas (ej: 3.5, 3.0)")
     except Exception as e:
         st.error(f"Error: {e}")
-
 
 # ============================================================================
 # LÓGICA PRINCIPAL (CONTROL DE MÓDULOS)
@@ -224,7 +141,7 @@ if modulo_seleccionado == "Viento (RNC-07)":
 elif modulo_seleccionado == "Sismo (NSM-22)":
     
     # ----------------------------------------------------------------------------
-    # CÓDIGO ORIGINAL DE SISMO
+    # CÓDIGO SISMO 
     # ----------------------------------------------------------------------------
     st.title("NICSPECTRA: Herramienta de Diseño Sismorresistente")
     st.subheader("Norma Sismorresistente para la ciudad de Managua (NSM-22)")
@@ -296,15 +213,25 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         carga = 20.0 if es_zona_riesgo else 0.0
         return carga, es_zona_riesgo
 
-    # --- 3. INTERFAZ: MAPA ---
-    sitio_seleccionado_mapa = None
-    accel_mapa_val = None
+    # --- INICIALIZACIÓN DE ESTADO ---
+    # Esto guarda el departamento seleccionado, inicia por defecto en MANAGUA
+    if 'departamento_actual' not in st.session_state:
+        st.session_state['departamento_actual'] = 'MANAGUA'
 
+    # --- 3. INTERFAZ: MAPA ---
     if 'LATITUD' in Aceleracion_table.columns:
         with st.container(border=True):
             col_map, col_info = st.columns([3, 1])
             with col_map:
-                m = folium.Map(location=[12.8, -85.5], zoom_start=7, tiles="CartoDB positron")
+                # Centrar mapa basado en la selección actual
+                try:
+                    dep_sel_row = Aceleracion_table[Aceleracion_table['DEPARTAMENTO'] == st.session_state['departamento_actual']].iloc[0]
+                    lat_c, lon_c = dep_sel_row['LATITUD'], dep_sel_row['LONGITUD']
+                    zoom_c = 10
+                except:
+                    lat_c, lon_c, zoom_c = 12.8, -85.5, 7
+
+                m = folium.Map(location=[lat_c, lon_c], zoom_start=zoom_c, tiles="CartoDB positron")
                 
                 fg_z4 = folium.FeatureGroup(name="Zona IV (≥ 0.315g)")
                 fg_z3 = folium.FeatureGroup(name="Zona III")
@@ -328,32 +255,43 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
                 folium.LayerControl().add_to(m)
                 output = st_folium(m, height=400, use_container_width=True)
 
+            # LÓGICA DE CLIC EN EL MAPA
+            if output and output.get('last_object_clicked'):
+                lat_click = output['last_object_clicked']['lat']
+                lon_click = output['last_object_clicked']['lng']
+                
+                # Buscar departamento más cercano
+                df_map = Aceleracion_table.copy()
+                df_map['dist'] = np.sqrt((df_map['LATITUD']-lat_click)**2 + (df_map['LONGITUD']-lon_click)**2)
+                seleccion = df_map.loc[df_map['dist'].idxmin()]
+                nombre_nuevo = seleccion['DEPARTAMENTO']
+                
+                # Actualizar memoria y recargar
+                if nombre_nuevo != st.session_state['departamento_actual']:
+                    st.session_state['departamento_actual'] = nombre_nuevo
+                    st.rerun()
+
+            # Info al lado del mapa
             with col_info:
-                st.markdown("#### Selección en Mapa")
-                if output and output.get('last_object_clicked'):
-                    lat_c = output['last_object_clicked']['lat']
-                    lon_c = output['last_object_clicked']['lng']
-                    df_map = Aceleracion_table.copy()
-                    df_map['dist'] = np.sqrt((df_map['LATITUD']-lat_c)**2 + (df_map['LONGITUD']-lon_c)**2)
-                    seleccion = df_map.loc[df_map['dist'].idxmin()]
-                    
-                    sitio_seleccionado_mapa = seleccion['DEPARTAMENTO']
-                    accel_mapa_val = seleccion['ACELERACION']
-                    
-                    st.success(f"📍 {sitio_seleccionado_mapa}")
-                    st.metric("Aceleración a₀", f"{accel_mapa_val:.4f} g")
-                    st.info(f"Zona: {obtener_zona_sismica(accel_mapa_val)}")
-                else:
-                    st.info("Haga clic en un punto del mapa.")
+                # Usamos la variable de memoria
+                accel_val = Aceleracion_table.loc[Aceleracion_table['DEPARTAMENTO'] == st.session_state['departamento_actual'], 'ACELERACION'].values[0]
+                
+                st.markdown("#### Sitio Seleccionado")
+                st.success(f"📍 {st.session_state['departamento_actual']}")
+                st.metric("Aceleración a₀", f"{accel_val:.4f} g")
+                st.info(f"Zona: {obtener_zona_sismica(accel_val)}")
+                st.caption("Seleccione otro sitio haciendo clic en el mapa.")
 
     # --- 4. SIDEBAR - PARÁMETROS DE ENTRADA ---
     st.sidebar.header("Parámetros de Diseño (Sismo)")
 
     # 1. Ubicación y Suelo
+    
+    Departamento = st.session_state['departamento_actual']
+    
+    # Mostramos visualmente cuál está seleccionado
     st.sidebar.subheader("1. Ubicación y Suelo")
-    lista_deps = Aceleracion_table['DEPARTAMENTO'].unique()
-    idx_def = list(lista_deps).index(sitio_seleccionado_mapa) if sitio_seleccionado_mapa in lista_deps else 0
-    Departamento = st.sidebar.selectbox("Sitio / Municipio", lista_deps, index=idx_def)
+    st.sidebar.info(f"**Sitio:** {Departamento}")
 
     try:
         a_0 = Aceleracion_table.loc[Aceleracion_table['DEPARTAMENTO'] == Departamento, 'ACELERACION'].values[0]
@@ -363,16 +301,37 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
 
     Zona_Sismica = obtener_zona_sismica(a_0)
 
-    if Departamento == 'MANAGUA':
-        sitios_managua = Vs30_table['NOMBRE DEL SITIO'].unique()
-        Ubicacion_E = st.sidebar.selectbox("Sitio Específico (Managua)", sitios_managua)
-        col_vs30 = 'Vs30(m/s)' if 'Vs30(m/s)' in Vs30_table.columns else 'Vs30 (m/s)'
-        Vs30 = Vs30_table.loc[Vs30_table['NOMBRE DEL SITIO'] == Ubicacion_E, col_vs30].values[0]
-    else:
-        Vs30 = st.sidebar.number_input("Ingrese Vs30 (m/s)", 100, 2500, 360)
+    # Selector de Método de Suelo
+    metodo_suelo = st.sidebar.radio(
+        "¿Cómo desea definir el suelo?",
+        ["Ingresar/Calcular Vs30", "Seleccionar Tipo (A-E)"]
+    )
 
-    Tipo_Suelo = clasificar_suelo(Vs30)
-    st.sidebar.info(f"**Suelo Tipo {Tipo_Suelo}** (Zona {Zona_Sismica})")
+    Vs30 = None
+    if metodo_suelo == "Ingresar/Calcular Vs30":
+        if Departamento == 'MANAGUA':
+            sitios_managua = Vs30_table['NOMBRE DEL SITIO'].unique()
+            Ubicacion_E = st.sidebar.selectbox("Sitio Específico (Managua)", sitios_managua)
+            col_vs30 = 'Vs30(m/s)' if 'Vs30(m/s)' in Vs30_table.columns else 'Vs30 (m/s)'
+            Vs30 = Vs30_table.loc[Vs30_table['NOMBRE DEL SITIO'] == Ubicacion_E, col_vs30].values[0]
+            st.sidebar.write(f"*Vs30 base de datos: {Vs30} m/s*")
+        else:
+            Vs30 = st.sidebar.number_input("Ingrese Vs30 (m/s)", min_value=100.0, max_value=2500.0, value=360.0)
+        
+        Tipo_Suelo = clasificar_suelo(Vs30)
+
+    else:
+        Tipo_Suelo = st.sidebar.selectbox(
+            "Seleccione el Tipo de Suelo:",
+            ["A", "B", "C", "D", "E"],
+            index=3
+        )
+        st.sidebar.caption("Selección manual directa.")
+
+    if Vs30:
+        st.sidebar.info(f"**Suelo Tipo {Tipo_Suelo}** (Zona {Zona_Sismica}) | Vs30: {Vs30} m/s")
+    else:
+        st.sidebar.info(f"**Suelo Tipo {Tipo_Suelo}** (Zona {Zona_Sismica})")
 
     # 2. Importancia
     st.sidebar.subheader("2. Grupo de Importancia (Tabla 5.2.1)")
@@ -472,7 +431,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     k3.metric("Ω₀ (Sobrerresistencia)", f"{Omega:.2f}")
     k4.metric("Cd (Deflexión)", f"{Cd:.2f}")
 
-    # --- 6. GRÁFICOS Y DESCARGAS ---
+    # --- 6. GRÁFICOS  ---
     T_vals = np.linspace(0.0, 4.0, 401)
     A_elastico = []
     A_diseno = []
@@ -501,13 +460,6 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
             val_d = val_e
         A_diseno.append(val_d)
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(T_vals, A_elastico, 'k-', linewidth=2, label='Elástico (A)')
-    ax.plot(T_vals, A_diseno, 'r-', linewidth=2, label=f'Diseño (Ad) [Ro={R_o:.2f}]')
-    ax.set_title(f"Espectros NSM-22 | {Departamento} | Suelo Tipo {Tipo_Suelo}", fontsize=14)
-    ax.set_xlabel("Periodo (s)"); ax.set_ylabel("Aceleración (g)")
-    ax.grid(True, linestyle='--', alpha=0.7); ax.legend(); ax.set_xlim(0, 4); ax.set_ylim(0)
-    st.pyplot(fig)
 
   # ------------------------------------------------------------------------
     # 6. GRÁFICOS Y DESCARGAS 
@@ -518,7 +470,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     ax.set_title(f"Espectros NSM-22 | {Departamento} | Suelo Tipo {Tipo_Suelo}", fontsize=14)
     ax.set_xlabel("Periodo (s)"); ax.set_ylabel("Aceleración (g)")
     ax.grid(True, linestyle='--', alpha=0.7); ax.legend(); ax.set_xlim(0, 4); ax.set_ylim(0)
-    
+    st.pyplot(fig)
 
     nombre_dep = Departamento.replace(" ", "_")
     
