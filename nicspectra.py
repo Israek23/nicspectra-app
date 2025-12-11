@@ -141,7 +141,7 @@ if modulo_seleccionado == "Viento (RNC-07)":
 elif modulo_seleccionado == "Sismo (NSM-22)":
     
     # ----------------------------------------------------------------------------
-    # CÓDIGO SISMO 
+    # CÓDIGO SISMO (CON LÓGICA DE CDS AUTOMÁTICA)
     # ----------------------------------------------------------------------------
     st.title("NICSPECTRA: Herramienta de Diseño Sismorresistente")
     st.subheader("Norma Sismorresistente para la ciudad de Managua (NSM-22)")
@@ -188,6 +188,21 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         elif 180 <= vs30 <= 360: return "D"
         else: return "E"
 
+    # --- NUEVA FUNCIÓN: Determinar Categoría de Diseño Sísmico (CDS) ---
+    def obtener_cds(a0, grupo_str):
+        # Identificar si es Riesgo Alto (III o IV) o Normal (I o II)
+        # El string viene como 'Grupo A: ... (IV)'
+        es_riesgo_alto = "IV" in grupo_str or "III" in grupo_str
+        
+        if a0 >= 0.30:
+            return "D" # Siempre D en zona muy alta
+        elif 0.15 <= a0 < 0.30:
+            return "D" if es_riesgo_alto else "C"
+        elif 0.10 <= a0 < 0.15:
+            return "C" if es_riesgo_alto else "B"
+        else: # a0 < 0.10
+            return "B" if es_riesgo_alto else "A"
+
     def obtener_Fas(zona, tipo_suelo):
         tabla_Fas = {
             "Z1": {"A": 0.8, "B": 1.0, "C": 1.4, "D": 1.7, "E": 2.2},
@@ -214,7 +229,6 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         return carga, es_zona_riesgo
 
     # --- INICIALIZACIÓN DE ESTADO ---
-    # Esto guarda el departamento seleccionado, inicia por defecto en MANAGUA
     if 'departamento_actual' not in st.session_state:
         st.session_state['departamento_actual'] = 'MANAGUA'
 
@@ -223,7 +237,6 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         with st.container(border=True):
             col_map, col_info = st.columns([3, 1])
             with col_map:
-                # Centrar mapa basado en la selección actual
                 try:
                     dep_sel_row = Aceleracion_table[Aceleracion_table['DEPARTAMENTO'] == st.session_state['departamento_actual']].iloc[0]
                     lat_c, lon_c = dep_sel_row['LATITUD'], dep_sel_row['LONGITUD']
@@ -255,25 +268,20 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
                 folium.LayerControl().add_to(m)
                 output = st_folium(m, height=400, use_container_width=True)
 
-            # LÓGICA DE CLIC EN EL MAPA
             if output and output.get('last_object_clicked'):
                 lat_click = output['last_object_clicked']['lat']
                 lon_click = output['last_object_clicked']['lng']
                 
-                # Buscar departamento más cercano
                 df_map = Aceleracion_table.copy()
                 df_map['dist'] = np.sqrt((df_map['LATITUD']-lat_click)**2 + (df_map['LONGITUD']-lon_click)**2)
                 seleccion = df_map.loc[df_map['dist'].idxmin()]
                 nombre_nuevo = seleccion['DEPARTAMENTO']
                 
-                # Actualizar memoria y recargar
                 if nombre_nuevo != st.session_state['departamento_actual']:
                     st.session_state['departamento_actual'] = nombre_nuevo
                     st.rerun()
 
-            # Info al lado del mapa
             with col_info:
-                # Usamos la variable de memoria
                 accel_val = Aceleracion_table.loc[Aceleracion_table['DEPARTAMENTO'] == st.session_state['departamento_actual'], 'ACELERACION'].values[0]
                 
                 st.markdown("#### Sitio Seleccionado")
@@ -286,10 +294,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     st.sidebar.header("Parámetros de Diseño (Sismo)")
 
     # 1. Ubicación y Suelo
-    
     Departamento = st.session_state['departamento_actual']
-    
-    # Mostramos visualmente cuál está seleccionado
     st.sidebar.subheader("1. Ubicación y Suelo")
     st.sidebar.info(f"**Sitio:** {Departamento}")
 
@@ -301,7 +306,6 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
 
     Zona_Sismica = obtener_zona_sismica(a_0)
 
-    # Selector de Método de Suelo
     metodo_suelo = st.sidebar.radio(
         "¿Cómo desea definir el suelo?",
         ["Ingresar/Calcular Vs30", "Seleccionar Tipo (A-E)"]
@@ -317,15 +321,9 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
             st.sidebar.write(f"*Vs30 base de datos: {Vs30} m/s*")
         else:
             Vs30 = st.sidebar.number_input("Ingrese Vs30 (m/s)", min_value=100.0, max_value=2500.0, value=360.0)
-        
         Tipo_Suelo = clasificar_suelo(Vs30)
-
     else:
-        Tipo_Suelo = st.sidebar.selectbox(
-            "Seleccione el Tipo de Suelo:",
-            ["A", "B", "C", "D", "E"],
-            index=3
-        )
+        Tipo_Suelo = st.sidebar.selectbox("Seleccione el Tipo de Suelo:", ["A", "B", "C", "D", "E"], index=3)
         st.sidebar.caption("Selección manual directa.")
 
     if Vs30:
@@ -334,7 +332,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         st.sidebar.info(f"**Suelo Tipo {Tipo_Suelo}** (Zona {Zona_Sismica})")
 
     # 2. Importancia
-    st.sidebar.subheader("2. Grupo de Importancia (Tabla 5.2.1)")
+    st.sidebar.subheader("2. Grupo de Importancia")
     grupo_dict = {
         'Grupo A: Esenciales/Críticas (IV)': 1.65,
         'Grupo B: Ocupación Especial (III)': 1.30,
@@ -344,6 +342,10 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     Grupo_I_key = st.sidebar.selectbox("Seleccione Grupo", list(grupo_dict.keys()), index=2)
     I = grupo_dict[Grupo_I_key]
 
+    # --- CALCULO AUTOMÁTICO DE CDS (Categoría de Diseño Sísmico) ---
+    CDS_calculado = obtener_cds(a_0, Grupo_I_key)
+    st.sidebar.success(f"**Categoría Diseño Sísmico: CDS {CDS_calculado}**")
+    
     # 3. Sistema Estructural
     st.sidebar.subheader("3. Sistema Estructural")
     cat_sistemas = {
@@ -363,30 +365,74 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     Omega = row_sys['Omega']
     Cd = row_sys['Coeficiente de deflexion, Cd']
 
-    # 4. Irregularidades
+    # 4. Irregularidades (CON LÓGICA DE CDS C y D)
     st.sidebar.subheader("4. Factores de Irregularidad")
+    
+    error_irregularidad = False
+    mensaje_error = ""
+
+    # --- PLANTA ---
     with st.sidebar.expander("Irregularidad en Planta (Φp)"):
-        chk_p1 = st.checkbox("Tipo 1: Torsional (0.9)")
-        chk_p2 = st.checkbox("Tipo 2: Esquinas Entrantes (0.9)")
-        chk_p3 = st.checkbox("Tipo 3: Discontinuidad Diafragma (0.9)")
-        chk_p4 = st.checkbox("Tipo 4: Ejes No Paralelos (0.8)")
-        phi_pa = 0.9 if (chk_p1 or chk_p2 or chk_p3) else 1.0
-        phi_pb = 0.8 if chk_p4 else 1.0
-        Phi_P = phi_pa * phi_pb
+        st.markdown("*(Tabla 5.4.2 NSM-22)*")
+        
+        torsion_opt = st.selectbox("Tipo 1: Torsional", ["Ninguna", "Estándar (1a) [0.9]", "Extrema (1b) [0.8]"])
+        factor_torsion = 1.0
+        if "Estándar" in torsion_opt: factor_torsion = 0.9
+        elif "Extrema" in torsion_opt: factor_torsion = 0.8
+        
+        chk_p2 = st.checkbox("Tipo 2: Esquinas Entrantes [0.9]")
+        chk_p3 = st.checkbox("Tipo 3: Discontinuidad Diafragma [0.9]")
+        chk_p4 = st.checkbox("Tipo 4: Ejes No Paralelos [0.8]")
+        
+        phi_p_acum = factor_torsion
+        if chk_p2: phi_p_acum *= 0.9
+        if chk_p3: phi_p_acum *= 0.9
+        if chk_p4: phi_p_acum *= 0.8
+        
+        Phi_P = phi_p_acum
         st.write(f"**Factor Planta (Φp): {Phi_P:.2f}**")
 
+    # --- ELEVACIÓN ---
     with st.sidebar.expander("Irregularidad en Elevación (Φe)"):
-        chk_e1 = st.checkbox("Tipo 1: Piso Flexible (0.8)")
-        chk_e2 = st.checkbox("Tipo 2: Distribución de Masa (0.9)")
-        chk_e3 = st.checkbox("Tipo 3: Geométrica (0.9)")
-        chk_e4 = st.checkbox("Tipo 4: Piso Débil (0.8)")
-        phi_ea = 0.8 if (chk_e1 or chk_e4) else 1.0
-        phi_eb = 0.9 if (chk_e2 or chk_e3) else 1.0
-        Phi_E = phi_ea * phi_eb
+        st.markdown("*(Tabla 5.4.3 NSM-22)*")
+        
+        blando_opt = st.selectbox("Tipo 1: Piso Blando (Rigidez)", ["Ninguna", "Estándar (1a) [0.8]", "Extrema (3Ex) [PROHIBIDA]"])
+        factor_blando = 1.0
+        if "Estándar" in blando_opt: factor_blando = 0.8
+        elif "Extrema" in blando_opt:
+            # AQUI SE USA EL CDS: Si es C o D, prohibido.
+            if CDS_calculado in ["C", "D"]:
+                error_irregularidad = True
+                mensaje_error = f"🚫 ERROR NSM-22: Irregularidad 3Ex PROHIBIDA en Categoría de Diseño Sísmico '{CDS_calculado}'."
+            else:
+                factor_blando = 0.7 # Solo permitido en A o B
+        
+        debil_opt = st.selectbox("Tipo 4: Piso Débil (Resistencia)", ["Ninguna", "Estándar (4a) [0.8]", "Extrema (4Ex) [PROHIBIDA]"])
+        factor_debil = 1.0
+        if "Estándar" in debil_opt: factor_debil = 0.8
+        elif "Extrema" in debil_opt:
+            if CDS_calculado in ["C", "D"]:
+                error_irregularidad = True
+                mensaje_error = f"🚫 ERROR NSM-22: Irregularidad 4Ex PROHIBIDA en Categoría de Diseño Sísmico '{CDS_calculado}'."
+            else:
+                factor_debil = 0.6 # Solo permitido en A o B
+        
+        chk_e2 = st.checkbox("Tipo 2: Peso (Masa) [0.9]")
+        chk_e3 = st.checkbox("Tipo 3: Geométrica Vertical [0.9]")
+        
+        phi_e_acum = factor_blando * factor_debil
+        if chk_e2: phi_e_acum *= 0.9
+        if chk_e3: phi_e_acum *= 0.9
+        
+        Phi_E = phi_e_acum
         st.write(f"**Factor Elevación (Φe): {Phi_E:.2f}**")
 
     # --- 5. MOTOR DE CÁLCULO ---
     st.header("Resultados del Análisis (NSM-22)")
+
+    if error_irregularidad:
+        st.error(mensaje_error)
+        st.stop() # DETIENE TODO SI HAY ERROR
 
     # Cálculo Ceniza
     C_cv, es_zona_riesgo = calcular_carga_ceniza(Departamento)
@@ -467,9 +513,28 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(T_vals, A_elastico, 'k-', linewidth=2, label='Elástico (A)')
     ax.plot(T_vals, A_diseno, 'r-', linewidth=2, label=f'Diseño (Ad) [Ro={R_o:.2f}]')
+    
     ax.set_title(f"Espectros NSM-22 | {Departamento} | Suelo Tipo {Tipo_Suelo}", fontsize=14)
     ax.set_xlabel("Periodo (s)"); ax.set_ylabel("Aceleración (g)")
-    ax.grid(True, linestyle='--', alpha=0.7); ax.legend(); ax.set_xlim(0, 4); ax.set_ylim(0)
+    
+    # -------------------------------
+    # Ticks del Eje Y cada 0.1 g + Minor Ticks
+    # -------------------------------
+    
+    max_val = max(max(A_elastico), max(A_diseno))
+    limite_y = np.ceil(max_val * 10) / 10 
+    if limite_y < max_val: 
+        limite_y += 0.1
+    
+    ax.set_yticks(np.arange(0, limite_y + 0.15, 0.1))
+    ax.set_ylim(0, limite_y + 0.05)
+    
+    # --- MINOR TICKS ---
+    ax.minorticks_on()
+    ax.grid(which='major', linestyle='--', linewidth=0.7, alpha=0.8, color='black')
+    ax.grid(which='minor', linestyle=':', linewidth=0.5, alpha=0.5, color='gray')
+    
+    ax.legend(); ax.set_xlim(0, 4)
     st.pyplot(fig)
 
     nombre_dep = Departamento.replace(" ", "_")
@@ -482,7 +547,6 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
 
     @st.cache_data
     def convertir_txt(t, sa):
-        # Crea el texto con columnas alineadas
         df = pd.DataFrame({'Periodo(s)': t, 'Sa_Diseño(g)': sa})
         return df.to_string(index=False).encode('utf-8')
 
