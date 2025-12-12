@@ -6,6 +6,12 @@ import folium
 from streamlit_folium import st_folium
 import io
 
+# --- Bibliotecas de Reporte PDF ---
+from fpdf import FPDF
+import tempfile
+from datetime import datetime
+# ----------------------------------
+
 # ----------------------------------------------------------------------------
 # 0. CONFIGURACIÓN GLOBAL
 # ----------------------------------------------------------------------------
@@ -16,16 +22,79 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------------------------------
-# 1. MENÚ DE NAVEGACIÓN
+# 1. FUNCIÓN DE REPORTE PDF 
+# ----------------------------------------------------------------------------
+class PDFReport(FPDF):
+    def header(self):
+        try:
+            self.image('logo_nicspectra.jpg', 10, 8, 20)
+        except:
+            pass
+        self.set_font('Arial', 'B', 15)
+        self.cell(80)
+        self.cell(30, 10, 'NICSPECTRA - Reporte de Cálculo', 0, 0, 'C')
+        self.ln(20)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Página {self.page_no()} - {datetime.now().strftime("%d/%m/%Y")}', 0, 0, 'C')
+
+def generar_pdf_sismo(datos, fig_plot):
+    pdf = PDFReport()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Título
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 10, f'Módulo: Sismo (NSM-22) - {datos["departamento"]}', 0, 1, 'L')
+    pdf.ln(5)
+
+    # Tabla de Datos
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_fill_color(220, 230, 255)
+    pdf.cell(0, 8, "Resumen de Parámetros y Resultados", 1, 1, 'L', fill=True)
+    pdf.set_font('Arial', '', 10)
+    
+    # Lista de valores a imprimir
+    items = [
+        ("Ubicación", datos['departamento']),
+        ("Aceleración (a0)", f"{datos['a0']:.4f} g"),
+        ("Tipo de Suelo", f"{datos['suelo']} (Vs30: {datos['vs30']})"),
+        ("Grupo Importancia", f"{datos['grupo']} (I={datos['I']})"),
+        ("Categoría Diseño", datos['cds']),
+        ("Sistema Estructural", datos['sistema']),
+        ("R (Sistema)", f"{datos['R']}"),
+        ("Irreg. Planta (Phi_P)", f"{datos['Phi_P']:.2f}"),
+        ("Irreg. Elevación (Phi_E)", f"{datos['Phi_E']:.2f}"),
+        ("R0 (Reducido)", f"{datos['Ro']:.2f}"),
+        ("Aceleración Diseño (A0)", f"{datos['A0']:.4f} g")
+    ]
+    
+    for k, v in items:
+        pdf.cell(95, 8, k, 1)
+        pdf.cell(95, 8, str(v), 1, 1)
+        
+    pdf.ln(10)
+    
+    # Pegar Gráfico
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 8, "Espectro de Diseño", 0, 1, 'L')
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+            fig_plot.savefig(tmpfile.name, format="png", dpi=150, bbox_inches='tight')
+            pdf.image(tmpfile.name, x=10, w=180)
+    except Exception as e:
+        pdf.cell(0, 10, f"Error al generar gráfico: {str(e)}", 0, 1)
+        
+    return pdf.output(dest='S').encode('latin-1')
+
+# ----------------------------------------------------------------------------
+# 2. MENÚ DE NAVEGACIÓN
 # ----------------------------------------------------------------------------
 
-try:
-    st.sidebar.image("logo_nicspectra.jpg", width=200)
-except:
-    try:
-        st.sidebar.image("logo nicspectra.jpg", width=200)
-    except:
-        pass
+# Carga directa del logo
+st.sidebar.image("logo_nicspectra.jpg", width=200)
 
 st.sidebar.title("Navegación")
 modulo_seleccionado = st.sidebar.radio(
@@ -141,7 +210,7 @@ if modulo_seleccionado == "Viento (RNC-07)":
 elif modulo_seleccionado == "Sismo (NSM-22)":
     
     # ----------------------------------------------------------------------------
-    # CÓDIGO SISMO (CON LÓGICA DE CDS AUTOMÁTICA)
+    # CÓDIGO SISMO 
     # ----------------------------------------------------------------------------
     st.title("NICSPECTRA: Herramienta de Diseño Sismorresistente")
     st.subheader("Norma Sismorresistente para la ciudad de Managua (NSM-22)")
@@ -188,19 +257,18 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         elif 180 <= vs30 <= 360: return "D"
         else: return "E"
 
-    # --- NUEVA FUNCIÓN: Determinar Categoría de Diseño Sísmico (CDS) ---
+    # Determinar Categoría de Diseño Sísmico (CDS)
     def obtener_cds(a0, grupo_str):
         # Identificar si es Riesgo Alto (III o IV) o Normal (I o II)
-        # El string viene como 'Grupo A: ... (IV)'
         es_riesgo_alto = "IV" in grupo_str or "III" in grupo_str
         
         if a0 >= 0.30:
-            return "D" # Siempre D en zona muy alta
+            return "D" 
         elif 0.15 <= a0 < 0.30:
             return "D" if es_riesgo_alto else "C"
         elif 0.10 <= a0 < 0.15:
             return "C" if es_riesgo_alto else "B"
-        else: # a0 < 0.10
+        else:
             return "B" if es_riesgo_alto else "A"
 
     def obtener_Fas(zona, tipo_suelo):
@@ -365,74 +433,87 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     Omega = row_sys['Omega']
     Cd = row_sys['Coeficiente de deflexion, Cd']
 
-    # 4. Irregularidades (CON LÓGICA DE CDS C y D)
+    # =========================================================================
+    # 4. IRREGULARIDADES (OPTIMIZADO Y LIMPIO)
+    # =========================================================================
     st.sidebar.subheader("4. Factores de Irregularidad")
     
-    error_irregularidad = False
-    mensaje_error = ""
-
-    # --- PLANTA ---
+    # --- A. IRREGULARIDAD EN PLANTA (Φp = Φpa x Φpb) ---
     with st.sidebar.expander("Irregularidad en Planta (Φp)"):
-        st.markdown("*(Tabla 5.4.2 NSM-22)*")
+        st.markdown("*(Cálculo según Tabla 5.4.1)*")
         
-        torsion_opt = st.selectbox("Tipo 1: Torsional", ["Ninguna", "Estándar (1a) [0.9]", "Extrema (1b) [0.8]"])
-        factor_torsion = 1.0
-        if "Estándar" in torsion_opt: factor_torsion = 0.9
-        elif "Extrema" in torsion_opt: factor_torsion = 0.8
+        # GRUPO Φpa
+        st.markdown("**Grupo A (Φpa):** Torsión, Esquinas, Diafragma")
         
-        chk_p2 = st.checkbox("Tipo 2: Esquinas Entrantes [0.9]")
-        chk_p3 = st.checkbox("Tipo 3: Discontinuidad Diafragma [0.9]")
-        chk_p4 = st.checkbox("Tipo 4: Ejes No Paralelos [0.8]")
+        # Tipo 1: Torsional
+        torsion_opt = st.selectbox("Tipo 1: Torsional", ["Regular (1.0)", "Irregular (0.9)", "Extrema (0.8)"])
+        phi_1 = 1.0
+        if "Irregular (0.9)" in torsion_opt: phi_1 = 0.9
+        elif "Extrema (0.8)" in torsion_opt: phi_1 = 0.8
         
-        phi_p_acum = factor_torsion
-        if chk_p2: phi_p_acum *= 0.9
-        if chk_p3: phi_p_acum *= 0.9
-        if chk_p4: phi_p_acum *= 0.8
+        # Tipo 2: Esquinas
+        chk_p2 = st.checkbox("Tipo 2: Esquinas Entrantes (0.9)")
+        phi_2 = 0.9 if chk_p2 else 1.0
         
-        Phi_P = phi_p_acum
-        st.write(f"**Factor Planta (Φp): {Phi_P:.2f}**")
+        # Tipo 3: Diafragma
+        chk_p3 = st.checkbox("Tipo 3: Discontinuidad Diafragma (0.9)")
+        phi_3 = 0.9 if chk_p3 else 1.0
+        
+        # Cálculo Φpa
+        Phi_PA = min(phi_1, phi_2, phi_3)
+        
+        # GRUPO Φpb
+        st.markdown("**Grupo B (Φpb):** Ejes no paralelos")
+        chk_p4 = st.checkbox("Tipo 4: Ejes No Paralelos (0.8)")
+        Phi_PB = 0.8 if chk_p4 else 1.0
+        
+        # Cálculo Final Φp
+        Phi_P = Phi_PA * Phi_PB
+        st.info(f"Φp = {Phi_PA} (Grp A) × {Phi_PB} (Grp B) = **{Phi_P:.2f}**")
 
-    # --- ELEVACIÓN ---
+    # --- B. IRREGULARIDAD EN ELEVACIÓN (Φe = Φea x Φeb) ---
     with st.sidebar.expander("Irregularidad en Elevación (Φe)"):
-        st.markdown("*(Tabla 5.4.3 NSM-22)*")
+        st.markdown("*(Cálculo según Tabla 5.4.1)*")
+
+        # --- GRUPO A (Φea): Piso Flexible y Débil ---
+        st.markdown("**Grupo A (Φea):** Piso Flexible y Piso Débil")
         
-        blando_opt = st.selectbox("Tipo 1: Piso Blando (Rigidez)", ["Ninguna", "Estándar (1a) [0.8]", "Extrema (3Ex) [PROHIBIDA]"])
-        factor_blando = 1.0
-        if "Estándar" in blando_opt: factor_blando = 0.8
-        elif "Extrema" in blando_opt:
-            # AQUI SE USA EL CDS: Si es C o D, prohibido.
-            if CDS_calculado in ["C", "D"]:
-                error_irregularidad = True
-                mensaje_error = f"🚫 ERROR NSM-22: Irregularidad 3Ex PROHIBIDA en Categoría de Diseño Sísmico '{CDS_calculado}'."
-            else:
-                factor_blando = 0.7 # Solo permitido en A o B
-        
-        debil_opt = st.selectbox("Tipo 4: Piso Débil (Resistencia)", ["Ninguna", "Estándar (4a) [0.8]", "Extrema (4Ex) [PROHIBIDA]"])
-        factor_debil = 1.0
-        if "Estándar" in debil_opt: factor_debil = 0.8
-        elif "Extrema" in debil_opt:
-            if CDS_calculado in ["C", "D"]:
-                error_irregularidad = True
-                mensaje_error = f"🚫 ERROR NSM-22: Irregularidad 4Ex PROHIBIDA en Categoría de Diseño Sísmico '{CDS_calculado}'."
-            else:
-                factor_debil = 0.6 # Solo permitido en A o B
-        
-        chk_e2 = st.checkbox("Tipo 2: Peso (Masa) [0.9]")
-        chk_e3 = st.checkbox("Tipo 3: Geométrica Vertical [0.9]")
-        
-        phi_e_acum = factor_blando * factor_debil
-        if chk_e2: phi_e_acum *= 0.9
-        if chk_e3: phi_e_acum *= 0.9
-        
-        Phi_E = phi_e_acum
-        st.write(f"**Factor Elevación (Φe): {Phi_E:.2f}**")
+        # Tipo 1: Piso Flexible
+        blando_opt = st.selectbox("Tipo 1: Piso Flexible", ["Regular", "Irregular (0.8)", "Extrema (3Ex)"])
+        phi_1_elev = 1.0 if blando_opt == "Regular" else 0.8
+
+        if "Extrema" in blando_opt and CDS_calculado in ["C", "D"]:
+            st.error(f"⚠️ Irregularidad 3Ex PROHIBIDA en CDS {CDS_calculado} (Sec 5.4.3).")
+
+        # Tipo 4: Piso Débil
+        debil_opt = st.selectbox("Tipo 4: Piso Débil", ["Regular", "Irregular (0.8)", "Extrema (4Ex)"])
+        phi_4_elev = 1.0 if debil_opt == "Regular" else 0.8
+
+        if "Extrema" in debil_opt and CDS_calculado in ["C", "D"]:
+            st.error(f"⚠️ Irregularidad 4Ex PROHIBIDA en CDS {CDS_calculado} (Sec 5.4.3).")
+
+        # Calculamos el Φea
+        Phi_EA = min(phi_1_elev, phi_4_elev)
+
+        # --- GRUPO B (Φeb): Masa y Geometría ---
+        st.markdown("**Grupo B (Φeb):** Masa y Geometría")
+        chk_e2 = st.checkbox("Tipo 2: Peso/Masa (0.9)")
+        phi_2_elev = 0.9 if chk_e2 else 1.0
+        chk_e3 = st.checkbox("Tipo 3: Geométrica Vertical (0.9)")
+        phi_3_elev = 0.9 if chk_e3 else 1.0
+
+        # Calculamos el Φeb
+        Phi_EB = min(phi_2_elev, phi_3_elev)
+
+        # Cálculo Final Φe
+        Phi_E = Phi_EA * Phi_EB
+        st.info(f"Φe = {Phi_EA} (Grp A) × {Phi_EB} (Grp B) = **{Phi_E:.2f}**")
+    
+    # Cálculo de ro 
+    R_o = R * Phi_P * Phi_E
 
     # --- 5. MOTOR DE CÁLCULO ---
     st.header("Resultados del Análisis (NSM-22)")
-
-    if error_irregularidad:
-        st.error(mensaje_error)
-        st.stop() # DETIENE TODO SI HAY ERROR
 
     # Cálculo Ceniza
     C_cv, es_zona_riesgo = calcular_carga_ceniza(Departamento)
@@ -441,7 +522,8 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     F_as = obtener_Fas(Zona_Sismica, Tipo_Suelo)
     FS_Tb, FS_Tc = obtener_factores_ajuste_espectral(Tipo_Suelo)
     A_o = a_0 * F_as * I
-    R_o = R * Phi_P * Phi_E
+    
+    # Cálculo Final 
 
     Tb_base, Tc_base, Td_base = 0.05, 0.3, 2.0
     beta, p, q = 2.4, 0.8, 2.0
@@ -477,7 +559,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     k3.metric("Ω₀ (Sobrerresistencia)", f"{Omega:.2f}")
     k4.metric("Cd (Deflexión)", f"{Cd:.2f}")
 
-    # --- 6. GRÁFICOS  ---
+    # --- 6. GRÁFICOS  ---
     T_vals = np.linspace(0.0, 4.0, 401)
     A_elastico = []
     A_diseno = []
@@ -557,11 +639,11 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         buf.seek(0)
         return buf
 
-    # --- MENÚ DE DESCARGA ---
+    # --- MENÚ DE DESCARGA (ACTUALIZADO CON OPCIÓN PDF) ---
     
     opcion_descarga = st.selectbox(
         "Seleccione el formato a descargar:",
-        ["Texto Plano (.txt)", "Gráfico de Espectro (.png)"]
+        ["Texto Plano (.txt)", "Gráfico de Espectro (.png)", "Reporte PDF (.pdf)"]
     )
 
     if opcion_descarga == "Texto Plano (.txt)":
@@ -582,4 +664,34 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
             file_name=f"{nombre_base}.png",
             mime="image/png",
             key="dl_png"
+        )
+
+    elif opcion_descarga == "Reporte PDF (.pdf)":
+        # Recopilamos los datos exactos que ya calculaste arriba
+        datos_pdf = {
+            "departamento": Departamento,
+            "a0": a_0,
+            "suelo": Tipo_Suelo,
+            "vs30": Vs30 if Vs30 else "N/A",
+            "grupo": Grupo_I_key,
+            "I": I,
+            "cds": CDS_calculado,
+            "sistema": Sistema,
+            "Fas": F_as,
+            "A0": A_o,
+            "R": R,
+            "Phi_P": Phi_P,
+            "Phi_E": Phi_E,
+            "Ro": R_o,
+            "Omega": Omega,
+            "Cd": Cd
+        }
+        
+        pdf_bytes = generar_pdf_sismo(datos_pdf, fig)
+        
+        st.download_button(
+            label="📄 Descargar Reporte PDF",
+            data=pdf_bytes,
+            file_name=f"Reporte_{nombre_base}.pdf",
+            mime="application/pdf"
         )
