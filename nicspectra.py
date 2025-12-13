@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import folium
 from streamlit_folium import st_folium
 import io
+import unicodedata 
 
 # --- Bibliotecas de Reporte PDF ---
 from fpdf import FPDF
@@ -68,7 +69,8 @@ def generar_pdf_sismo(datos, fig_plot):
         ("Irreg. Planta (Phi_P)", f"{datos['Phi_P']:.2f}"),
         ("Irreg. Elevación (Phi_E)", f"{datos['Phi_E']:.2f}"),
         ("R0 (Reducido)", f"{datos['Ro']:.2f}"),
-        ("Aceleración Diseño (A0)", f"{datos['A0']:.4f} g")
+        ("Aceleración Diseño (A0)", f"{datos['A0']:.4f} g"),
+        ("Carga Ceniza (Ccv)", f"{datos['Ccv']} kg/m²")
     ]
     
     for k, v in items:
@@ -93,8 +95,10 @@ def generar_pdf_sismo(datos, fig_plot):
 # 2. MENÚ DE NAVEGACIÓN
 # ----------------------------------------------------------------------------
 
-# Carga directa del logo
-st.sidebar.image("logo_nicspectra.jpg", width=200)
+try:
+    st.sidebar.image("logo_nicspectra.jpg", width=200)
+except:
+    st.sidebar.write("### NICSPECTRA")
 
 st.sidebar.title("Navegación")
 modulo_seleccionado = st.sidebar.radio(
@@ -125,6 +129,22 @@ def app_viento():
         grupo_opt = st.selectbox("Importancia (Art. 50)", ["Grupo A (Esencial - 200 años)", "Grupo B (Normal - 50 años)"])
         rugosidad_opt = st.selectbox("Rugosidad (Tabla 6)", ["R1 (Campo Abierto)", "R2 (Pocas obstrucciones)", "R3 (Urbano)", "R4 (Centro denso)"])
         topo_opt = st.selectbox("Topografía (Tabla 7)", ["T1 (Protegida)", "T2 (Valles)", "T3 (Plano < 5%)", "T4 (Pendiente 5-10%)", "T5 (Cimas > 10%)"])
+
+        # ---  LINK NORMA RNC-07 (VIENTO) ---
+        st.markdown("---")
+        st.markdown("### 📚 Documentación Oficial")
+        try: 
+            with open("RNC-07.pdf", "rb") as f:
+                pdf_data_rnc = f.read()
+            
+            st.download_button(
+                label="📘 Descargar RNC-07 (PDF)",
+                data=pdf_data_rnc,
+                file_name="Reglamento_Nacional_Construccion_2007.pdf",
+                mime="application/pdf"
+            )
+        except:
+            pass
 
     # --- CÁLCULOS VIENTO ---
     try:
@@ -243,7 +263,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     Aceleracion_table = data.get("Aceleracion_table")
     Vs30_table = data.get("Vs30_table")
 
-    # --- 2. FUNCIONES DE LÓGICA NSM-22 ---
+    # --- 2. Funciones de Cálculo ---
     def obtener_zona_sismica(a0):
         if a0 >= 0.315: return "Z4"
         elif 0.23 <= a0 < 0.315: return "Z3"
@@ -257,9 +277,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         elif 180 <= vs30 <= 360: return "D"
         else: return "E"
 
-    # Determinar Categoría de Diseño Sísmico (CDS)
     def obtener_cds(a0, grupo_str):
-        # Identificar si es Riesgo Alto (III o IV) o Normal (I o II)
         es_riesgo_alto = "IV" in grupo_str or "III" in grupo_str
         
         if a0 >= 0.30:
@@ -287,20 +305,86 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         elif tipo_suelo == "D": return (2.0, 5/3)
         else: return (2.0, 5/3)
 
-    def calcular_carga_ceniza(departamento):
-        deptos_riesgo_ceniza = [
-            'CHINANDEGA', 'LEON', 'MANAGUA', 'MASAYA', 'GRANADA', 'CARAZO', 'RIVAS'
-        ]
-        dep_norm = departamento.upper().strip()
-        es_zona_riesgo = any(d in dep_norm for d in deptos_riesgo_ceniza)
+    # --- FUNCIÓN CENIZA ACTUALIZADA CON MUNICIPIOS ---
+    def normalizar_texto(texto):
+        """Elimina acentos y convierte a mayúsculas para comparación."""
+        if not isinstance(texto, str):
+            return ""
+        texto = texto.upper().strip()
+        return ''.join(
+            c for c in unicodedata.normalize('NFD', texto)
+            if unicodedata.category(c) != 'Mn'
+        )
+
+    def calcular_carga_ceniza(ubicacion):
+        """
+        Calcula la carga por ceniza volcánica según NSM-22.
+        Busca si la ubicación corresponde a un departamento de riesgo o uno de sus municipios.
+        """
+        # Base de datos de Departamentos de Riesgo y sus Municipios
+        mapa_riesgo_ceniza = {
+            'CHINANDEGA': [
+                'CHINANDEGA', 'CHICHIGALPA', 'CORINTO', 'EL REALEJO', 'EL VIEJO', 
+                'POSOLTEGA', 'PUERTO MORAZAN', 'SAN FRANCISCO DEL NORTE', 
+                'SAN PEDRO DEL NORTE', 'SANTO TOMAS DEL NORTE', 'SOMOTILLO', 
+                'VILLANUEVA', 'CINCO PINOS'
+            ],
+            'LEON': [
+                'LEON', 'ACHUAPA', 'EL JICARAL', 'EL SAUCE', 'LA PAZ CENTRO', 
+                'LARREYNAGA', 'MALPAISILLO', 'NAGAROTE', 'QUEZALGUAQUE', 
+                'SANTA ROSA DEL PEÑON', 'TELICA'
+            ],
+            'MANAGUA': [
+                'MANAGUA', 'CIUDAD SANDINO', 'EL CRUCERO', 'MATEARE', 
+                'SAN FRANCISCO LIBRE', 'SAN RAFAEL DEL SUR', 'TICUANTEPE', 
+                'TIPITAPA', 'VILLA EL CARMEN'
+            ],
+            'MASAYA': [
+                'MASAYA', 'CATARINA', 'LA CONCEPCION', 'LA CONCHA', 'MASATEPE', 
+                'NANDASMO', 'NINDIRI', 'NIQUINOHOMO', 'SAN JUAN DE ORIENTE', 'TISMA'
+            ],
+            'GRANADA': [
+                'GRANADA', 'DIRIA', 'DIRIOMO', 'NANDAIME'
+            ],
+            'CARAZO': [
+                'JINOTEPE', 'DIRIAMBA', 'DOLORES', 'EL ROSARIO', 'LA CONQUISTA', 
+                'LA PAZ DE CARAZO', 'SAN MARCOS', 'SANTA TERESA'
+            ],
+            'RIVAS': [ # Incluye Isla de Ometepe (Altagracia y Moyogalpa)
+                'RIVAS', 'ALTAGRACIA', 'BELEN', 'BUENOS AIRES', 'CARDENAS', 
+                'MOYOGALPA', 'POTOSI', 'SAN JORGE', 'SAN JUAN DEL SUR', 'TOLA'
+            ]
+        }
+
+        ub_norm = normalizar_texto(ubicacion)
+        es_zona_riesgo = False
+
+        # Verificación:
+        # 1. Si la ubicación coincide con el nombre del DEPARTAMENTO.
+        # 2. Si la ubicación coincide con algún MUNICIPIO dentro de esos departamentos.
+        for depto, municipios in mapa_riesgo_ceniza.items():
+            # Chequear si es el departamento
+            if ub_norm == depto:
+                es_zona_riesgo = True
+                break
+            
+            # Chequear si es un municipio
+            for muni in municipios:
+                if ub_norm == muni:
+                    es_zona_riesgo = True
+                    break
+            
+            if es_zona_riesgo:
+                break
+
         carga = 20.0 if es_zona_riesgo else 0.0
         return carga, es_zona_riesgo
 
-    # --- INICIALIZACIÓN DE ESTADO ---
+    
     if 'departamento_actual' not in st.session_state:
         st.session_state['departamento_actual'] = 'MANAGUA'
 
-    # --- 3. INTERFAZ: MAPA ---
+    # --- 5. MAPA INTERACTIVO ---
     if 'LATITUD' in Aceleracion_table.columns:
         with st.container(border=True):
             col_map, col_info = st.columns([3, 1])
@@ -358,7 +442,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
                 st.info(f"Zona: {obtener_zona_sismica(accel_val)}")
                 st.caption("Seleccione otro sitio haciendo clic en el mapa.")
 
-    # --- 4. SIDEBAR - PARÁMETROS DE ENTRADA ---
+    # --- 5. SIDEBAR - PARÁMETROS DE ENTRADA ---
     st.sidebar.header("Parámetros de Diseño (Sismo)")
 
     # 1. Ubicación y Suelo
@@ -391,8 +475,18 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
             Vs30 = st.sidebar.number_input("Ingrese Vs30 (m/s)", min_value=100.0, max_value=2500.0, value=360.0)
         Tipo_Suelo = clasificar_suelo(Vs30)
     else:
-        Tipo_Suelo = st.sidebar.selectbox("Seleccione el Tipo de Suelo:", ["A", "B", "C", "D", "E"], index=3)
-        st.sidebar.caption("Selección manual directa.")
+        
+        opciones_visuales = [
+            "A (Roca Rígida)", 
+            "B (Roca)", 
+            "C (Suelo Muy Denso / Roca Blanda)", 
+            "D (Suelo Rígido)", 
+            "E (Suelo Blando)"
+        ]
+        seleccion = st.sidebar.selectbox("Seleccione el Tipo de Suelo:", opciones_visuales, index=3)
+        Tipo_Suelo = seleccion.split(" ")[0] 
+        
+        st.sidebar.caption("Selección segun la tabla 6.3.1.")
 
     if Vs30:
         st.sidebar.info(f"**Suelo Tipo {Tipo_Suelo}** (Zona {Zona_Sismica}) | Vs30: {Vs30} m/s")
@@ -434,7 +528,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     Cd = row_sys['Coeficiente de deflexion, Cd']
 
     # =========================================================================
-    # 4. IRREGULARIDADES (OPTIMIZADO Y LIMPIO)
+    #  IRREGULARIDADES 
     # =========================================================================
     st.sidebar.subheader("4. Factores de Irregularidad")
     
@@ -512,6 +606,21 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     # Cálculo de ro 
     R_o = R * Phi_P * Phi_E
 
+    # --- AGREGADO: LINK NORMA NSM-22 SIDEBAR ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📚 Documentación Oficial")
+    
+    # Intenta leer el archivo PDF si existe en el directorio
+    with open("NormaManaguaJunio22.pdf", "rb") as f:
+        pdf_data = f.read()
+    
+    st.sidebar.download_button(
+        label="📘 Descargar Norma NSM-22 (PDF)",
+        data=pdf_data,
+        file_name="Norma_Sismorresistente_Managua_2021.pdf",
+        mime="application/pdf"
+    )
+
     # --- 5. MOTOR DE CÁLCULO ---
     st.header("Resultados del Análisis (NSM-22)")
 
@@ -533,29 +642,37 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
 
     # --- VISUALIZACIÓN ---
     with st.container(border=True):
-        st.subheader("Cargas Ambientales (Sección 7.3)")
+        st.subheader("Cargas Ambientales (Sección 7.3 & RNC-07)")
         col_ash1, col_ash2 = st.columns([1, 3])
         
         col_ash1.metric("Carga Ceniza (Ccv)", f"{C_cv} kg/m²")
         
         if es_zona_riesgo:
             col_ash2.warning(f"⚠️ **Zona de Riesgo Volcánico:** {Departamento}")
-            col_ash2.markdown(f"Según NSM-22 Sec 7.3, se debe aplicar una carga mínima de **20 kg/m²**.")
+            col_ash2.markdown(f"La ubicación coincide con un Departamento o Municipio de riesgo (RNC-07 Art. 14 / NSM-22 Sec 7.3). Se aplica carga mínima de **20 kg/m²**.")
         else:
             col_ash2.success(f"✅ **Zona de Bajo Riesgo:** {Departamento}")
             col_ash2.caption("No se requiere carga de ceniza según mapa de amenaza regional.")
 
     st.subheader("Parámetros Sísmicos de Diseño")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Acel. Roca (a₀)", f"{a_0:.3f} g")
+    c1.metric("Aceleracion (a₀)", f"{a_0:.3f} g")
     c2.metric("Factor Suelo (Fas)", f"{F_as:.2f}")
     c3.metric("Importancia (I)", f"{I:.2f}")
     c4.metric("Acel. Diseño (A₀)", f"{A_o:.4f} g", help="a₀ × Fas × I")
 
     st.markdown("---")
+    st.subheader("Factores de Irregularidad y Respuesta Sísmica")
+
+    # Fila 1: Resultados de las Irregularidades
+    col_irr1, col_irr2, col_irr_vacia = st.columns([1, 1, 2]) # Usamos columnas para alinear a la izquierda
+    col_irr1.metric("Irreg. en Planta (Φp)", f"{Phi_P:.2f}")
+    col_irr2.metric("Irreg. en Elevación (Φe)", f"{Phi_E:.2f}")
+
+    # Fila 2: Coeficientes del Sistema
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Coef. R (Sistema)", f"{R:.2f}")
-    k2.metric("R₀ (Reducido)", f"{R_o:.2f}", delta_color="inverse", help="R × Φp × Φe")
+    k2.metric("R₀ (Reducido)", f"{R_o:.2f}", delta_color="inverse", help="R × Φp × Φe (Valor final para diseño)")
     k3.metric("Ω₀ (Sobrerresistencia)", f"{Omega:.2f}")
     k4.metric("Cd (Deflexión)", f"{Cd:.2f}")
 
@@ -587,7 +704,6 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         else:
             val_d = val_e
         A_diseno.append(val_d)
-
 
   # ------------------------------------------------------------------------
     # 6. GRÁFICOS Y DESCARGAS 
@@ -639,7 +755,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         buf.seek(0)
         return buf
 
-    # --- MENÚ DE DESCARGA (ACTUALIZADO CON OPCIÓN PDF) ---
+    # --- MENÚ DE DESCARGA ---
     
     opcion_descarga = st.selectbox(
         "Seleccione el formato a descargar:",
@@ -667,7 +783,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         )
 
     elif opcion_descarga == "Reporte PDF (.pdf)":
-        # Recopilamos los datos exactos que ya calculaste arriba
+        
         datos_pdf = {
             "departamento": Departamento,
             "a0": a_0,
@@ -684,7 +800,8 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
             "Phi_E": Phi_E,
             "Ro": R_o,
             "Omega": Omega,
-            "Cd": Cd
+            "Cd": Cd,
+            "Ccv": C_cv 
         }
         
         pdf_bytes = generar_pdf_sismo(datos_pdf, fig)
