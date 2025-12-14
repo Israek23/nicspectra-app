@@ -11,7 +11,6 @@ import unicodedata
 from fpdf import FPDF
 import tempfile
 from datetime import datetime
-# ----------------------------------
 
 # ----------------------------------------------------------------------------
 # 0. CONFIGURACIÓN GLOBAL
@@ -23,7 +22,7 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------------------------------
-# 1. FUNCIÓN DE REPORTE PDF 
+# 1. Reporte PDF 
 # ----------------------------------------------------------------------------
 class PDFReport(FPDF):
     def header(self):
@@ -94,11 +93,7 @@ def generar_pdf_sismo(datos, fig_plot):
 # ----------------------------------------------------------------------------
 # 2. MENÚ DE NAVEGACIÓN
 # ----------------------------------------------------------------------------
-
-try:
-    st.sidebar.image("logo_nicspectra.jpg", width=200)
-except:
-    st.sidebar.write("### NICSPECTRA")
+st.sidebar.image("logo_nicspectra.jpg", width=200)
 
 st.sidebar.title("Navegación")
 modulo_seleccionado = st.sidebar.radio(
@@ -130,9 +125,11 @@ def app_viento():
         rugosidad_opt = st.selectbox("Rugosidad (Tabla 6)", ["R1 (Campo Abierto)", "R2 (Pocas obstrucciones)", "R3 (Urbano)", "R4 (Centro denso)"])
         topo_opt = st.selectbox("Topografía (Tabla 7)", ["T1 (Protegida)", "T2 (Valles)", "T3 (Plano < 5%)", "T4 (Pendiente 5-10%)", "T5 (Cimas > 10%)"])
 
-        # ---  LINK NORMA RNC-07 (VIENTO) ---
+        # ---  DOCUMENTOS  ---
         st.markdown("---")
         st.markdown("### 📚 Documentación Oficial")
+
+#  RNC-07         
         try: 
             with open("RNC-07.pdf", "rb") as f:
                 pdf_data_rnc = f.read()
@@ -145,6 +142,20 @@ def app_viento():
             )
         except:
             pass
+
+#  MANUAL DE USUARIO 
+        try:
+            with open("Manual de Usuario NICSPECTRA.pdf", "rb") as f:
+                pdf_manual = f.read()
+            st.download_button(
+                label="📕 Descargar Manual de Usuario",
+                data=pdf_manual,
+                file_name="Manual_Usuario_NICSPECTRA.pdf",
+                mime="application/pdf"
+            )
+        except:
+            pass
+
 
     # --- CÁLCULOS VIENTO ---
     try:
@@ -305,7 +316,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         elif tipo_suelo == "D": return (2.0, 5/3)
         else: return (2.0, 5/3)
 
-    # --- FUNCIÓN CENIZA ACTUALIZADA CON MUNICIPIOS ---
+    # --- Ceniza  ---
     def normalizar_texto(texto):
         """Elimina acentos y convierte a mayúsculas para comparación."""
         if not isinstance(texto, str):
@@ -359,16 +370,11 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         ub_norm = normalizar_texto(ubicacion)
         es_zona_riesgo = False
 
-        # Verificación:
-        # 1. Si la ubicación coincide con el nombre del DEPARTAMENTO.
-        # 2. Si la ubicación coincide con algún MUNICIPIO dentro de esos departamentos.
         for depto, municipios in mapa_riesgo_ceniza.items():
-            # Chequear si es el departamento
             if ub_norm == depto:
                 es_zona_riesgo = True
                 break
-            
-            # Chequear si es un municipio
+
             for muni in municipios:
                 if ub_norm == muni:
                     es_zona_riesgo = True
@@ -504,7 +510,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     Grupo_I_key = st.sidebar.selectbox("Seleccione Grupo", list(grupo_dict.keys()), index=2)
     I = grupo_dict[Grupo_I_key]
 
-    # --- CALCULO AUTOMÁTICO DE CDS (Categoría de Diseño Sísmico) ---
+    # --- CALCULO DE CDS ---
     CDS_calculado = obtener_cds(a_0, Grupo_I_key)
     st.sidebar.success(f"**Categoría Diseño Sísmico: CDS {CDS_calculado}**")
     
@@ -606,11 +612,11 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     # Cálculo de ro 
     R_o = R * Phi_P * Phi_E
 
-    # --- AGREGADO: LINK NORMA NSM-22 SIDEBAR ---
+    # --- Documentos ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📚 Documentación Oficial")
     
-    # Intenta leer el archivo PDF si existe en el directorio
+    # NSM-22
     with open("NormaManaguaJunio22.pdf", "rb") as f:
         pdf_data = f.read()
     
@@ -620,6 +626,16 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
         file_name="Norma_Sismorresistente_Managua_2021.pdf",
         mime="application/pdf"
     )
+
+    with open("Manual de Usuario NICSPECTRA.pdf", "rb") as f:
+            pdf_manual = f.read()
+    st.sidebar.download_button(
+            label="📕 Descargar Manual de Usuario",
+            data=pdf_manual,
+            file_name="Manual_Usuario_NICSPECTRA.pdf",
+            mime="application/pdf"
+        )
+
 
     # --- 5. MOTOR DE CÁLCULO ---
     st.header("Resultados del Análisis (NSM-22)")
@@ -652,7 +668,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
             col_ash2.markdown(f"La ubicación coincide con un Departamento o Municipio de riesgo (RNC-07 Art. 14 / NSM-22 Sec 7.3). Se aplica carga mínima de **20 kg/m²**.")
         else:
             col_ash2.success(f"✅ **Zona de Bajo Riesgo:** {Departamento}")
-            col_ash2.caption("No se requiere carga de ceniza según mapa de amenaza regional.")
+            col_ash2.caption("No se requiere carga de ceniza.")
 
     st.subheader("Parámetros Sísmicos de Diseño")
     c1, c2, c3, c4 = st.columns(4)
@@ -665,7 +681,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     st.subheader("Factores de Irregularidad y Respuesta Sísmica")
 
     # Fila 1: Resultados de las Irregularidades
-    col_irr1, col_irr2, col_irr_vacia = st.columns([1, 1, 2]) # Usamos columnas para alinear a la izquierda
+    col_irr1, col_irr2, col_irr_vacia = st.columns([1, 1, 2]) 
     col_irr1.metric("Irreg. en Planta (Φp)", f"{Phi_P:.2f}")
     col_irr2.metric("Irreg. en Elevación (Φe)", f"{Phi_E:.2f}")
 
@@ -737,7 +753,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
 
     nombre_dep = Departamento.replace(" ", "_")
     
-    # Nombre base: "NSM22_MANAGUA_SueloC"
+    # Nombre base: 
     nombre_base = f"NSM22_{nombre_dep}_Suelo{Tipo_Suelo}"
 
     st.markdown("---")
