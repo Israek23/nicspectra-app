@@ -245,7 +245,7 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
     # ----------------------------------------------------------------------------
     st.title("NICSPECTRA: Herramienta de Diseño Sismorresistente")
     st.subheader("Norma Sismorresistente para la ciudad de Managua (NSM-22)")
-    st.caption("Defensa de Grado: Israel Castillo | Bryan Torrez | Andres Zamora")
+    st.caption("Defensa de Grado: Israel Castillo | Bryan Torres | Andres Zamora")
     
     # --- 1. CARGA DE DATOS ---
     @st.cache_data
@@ -828,3 +828,4 @@ elif modulo_seleccionado == "Sismo (NSM-22)":
             file_name=f"Reporte_{nombre_base}.pdf",
             mime="application/pdf"
         )
+
